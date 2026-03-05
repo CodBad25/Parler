@@ -3,6 +3,7 @@ use crate::helpers::clamshell;
 use crate::settings::{get_settings, AppSettings};
 use crate::utils;
 use log::{debug, error, info};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tauri::Manager;
@@ -117,6 +118,7 @@ pub enum MicrophoneMode {
 fn create_audio_recorder(
     vad_path: &str,
     app_handle: &tauri::AppHandle,
+    paused_flag: Arc<AtomicBool>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     let silero = SileroVad::new(vad_path, 0.3)
         .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
@@ -127,6 +129,7 @@ fn create_audio_recorder(
     let recorder = AudioRecorder::new()
         .map_err(|e| anyhow::anyhow!("Failed to create AudioRecorder: {}", e))?
         .with_vad(Box::new(smoothed_vad))
+        .with_paused_flag(paused_flag)
         .with_level_callback({
             let app_handle = app_handle.clone();
             move |levels| {
@@ -148,6 +151,7 @@ pub struct AudioRecordingManager {
     recorder: Arc<Mutex<Option<AudioRecorder>>>,
     is_open: Arc<Mutex<bool>>,
     is_recording: Arc<Mutex<bool>>,
+    is_paused: Arc<AtomicBool>,
     did_mute: Arc<Mutex<bool>>,
 }
 
@@ -170,6 +174,7 @@ impl AudioRecordingManager {
             recorder: Arc::new(Mutex::new(None)),
             is_open: Arc::new(Mutex::new(false)),
             is_recording: Arc::new(Mutex::new(false)),
+            is_paused: Arc::new(AtomicBool::new(false)),
             did_mute: Arc::new(Mutex::new(false)),
         };
 
@@ -261,6 +266,7 @@ impl AudioRecordingManager {
             *recorder_opt = Some(create_audio_recorder(
                 vad_path.to_str().unwrap(),
                 &self.app_handle,
+                self.is_paused.clone(),
             )?);
         }
 
@@ -394,6 +400,7 @@ impl AudioRecordingManager {
                 };
 
                 *self.is_recording.lock().unwrap() = false;
+                self.is_paused.store(false, Ordering::SeqCst);
 
                 // In on-demand mode turn the mic off again
                 if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
@@ -421,6 +428,22 @@ impl AudioRecordingManager {
         )
     }
 
+    pub fn toggle_pause(&self) -> bool {
+        if !self.is_recording() {
+            return false;
+        }
+        let prev = self.is_paused.fetch_xor(true, Ordering::SeqCst);
+        !prev
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.is_paused.load(Ordering::SeqCst)
+    }
+
+    pub fn paused_flag(&self) -> Arc<AtomicBool> {
+        self.is_paused.clone()
+    }
+
     /// Cancel any ongoing recording without returning audio samples
     pub fn cancel_recording(&self) {
         let mut state = self.state.lock().unwrap();
@@ -434,6 +457,7 @@ impl AudioRecordingManager {
             }
 
             *self.is_recording.lock().unwrap() = false;
+            self.is_paused.store(false, Ordering::SeqCst);
 
             // In on-demand mode turn the mic off again
             if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {

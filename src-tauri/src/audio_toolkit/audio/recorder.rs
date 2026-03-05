@@ -1,6 +1,6 @@
 use std::{
     io::Error,
-    sync::{mpsc, Arc, Mutex},
+    sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc, Mutex},
     time::Duration,
 };
 
@@ -28,6 +28,7 @@ pub struct AudioRecorder {
     worker_handle: Option<std::thread::JoinHandle<()>>,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    paused_flag: Arc<AtomicBool>,
 }
 
 impl AudioRecorder {
@@ -38,6 +39,7 @@ impl AudioRecorder {
             worker_handle: None,
             vad: None,
             level_cb: None,
+            paused_flag: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -51,6 +53,11 @@ impl AudioRecorder {
         F: Fn(Vec<f32>) + Send + Sync + 'static,
     {
         self.level_cb = Some(Arc::new(cb));
+        self
+    }
+
+    pub fn with_paused_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.paused_flag = flag;
         self
     }
 
@@ -74,6 +81,7 @@ impl AudioRecorder {
         let vad = self.vad.clone();
         // Move the optional level callback into the worker thread
         let level_cb = self.level_cb.clone();
+        let paused_flag = self.paused_flag.clone();
 
         let worker = std::thread::spawn(move || {
             let config = AudioRecorder::get_preferred_config(&thread_device)
@@ -117,7 +125,7 @@ impl AudioRecorder {
             stream.play().expect("failed to start stream");
 
             // keep the stream alive while we process samples
-            run_consumer(sample_rate, vad, sample_rx, cmd_rx, level_cb);
+            run_consumer(sample_rate, vad, sample_rx, cmd_rx, level_cb, paused_flag);
             // stream is dropped here, after run_consumer returns
         });
 
@@ -245,6 +253,7 @@ fn run_consumer(
     sample_rx: mpsc::Receiver<Vec<f32>>,
     cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    paused_flag: Arc<AtomicBool>,
 ) {
     let mut frame_resampler = FrameResampler::new(
         in_sample_rate as usize,
@@ -269,10 +278,11 @@ fn run_consumer(
     fn handle_frame(
         samples: &[f32],
         recording: bool,
+        paused: bool,
         vad: &Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
         out_buf: &mut Vec<f32>,
     ) {
-        if !recording {
+        if !recording || paused {
             return;
         }
 
@@ -301,8 +311,9 @@ fn run_consumer(
         }
 
         // ---------- existing pipeline ------------------------------------ //
+        let paused = paused_flag.load(Ordering::Relaxed);
         frame_resampler.push(&raw, &mut |frame: &[f32]| {
-            handle_frame(frame, recording, &vad, &mut processed_samples)
+            handle_frame(frame, recording, paused, &vad, &mut processed_samples)
         });
 
         // non-blocking check for a command
@@ -322,12 +333,12 @@ fn run_consumer(
                     // Drain any audio chunks that were captured but not yet consumed
                     while let Ok(remaining) = sample_rx.try_recv() {
                         frame_resampler.push(&remaining, &mut |frame: &[f32]| {
-                            handle_frame(frame, true, &vad, &mut processed_samples)
+                            handle_frame(frame, true, false, &vad, &mut processed_samples)
                         });
                     }
 
                     frame_resampler.finish(&mut |frame: &[f32]| {
-                        handle_frame(frame, true, &vad, &mut processed_samples)
+                        handle_frame(frame, true, false, &vad, &mut processed_samples)
                     });
 
                     let _ = reply_tx.send(std::mem::take(&mut processed_samples));
