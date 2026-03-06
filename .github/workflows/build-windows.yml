@@ -40,7 +40,7 @@ jobs:
             const fs = require('fs');
             const conf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
             delete conf.bundle.windows.signCommand;
-            conf.plugins.updater = { endpoints: [] };
+            conf.plugins.updater = { pubkey: '', endpoints: [] };
             fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(conf, null, 2));
           "
           echo '--- tauri.conf.json tail ---'
