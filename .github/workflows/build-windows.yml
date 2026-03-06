@@ -33,23 +33,23 @@ jobs:
       - name: Install frontend dependencies
         run: bun install
 
-      - name: Disable code signing and updater
+      - name: Disable code signing
         shell: bash
         run: |
           node -e "
             const fs = require('fs');
             const conf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
             delete conf.bundle.windows.signCommand;
-            conf.plugins.updater = { pubkey: '', endpoints: [] };
+            conf.plugins.updater.pubkey = 'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMxRUFFMDM2OUMwQzAzRjcKUldUM0F3eWNOdURxTVlRd0s1N3BxQWpjVE9EUkxaZTRDdHZMREdvTUs5Wk56TWZCOS96d1pBRzYK';
             fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(conf, null, 2));
           "
-          echo '--- tauri.conf.json tail ---'
-          cat src-tauri/tauri.conf.json | tail -15
 
       - name: Build with Tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
