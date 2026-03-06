@@ -33,11 +33,12 @@ jobs:
       - name: Install frontend dependencies
         run: bun install
 
-      - name: Disable code signing
+      - name: Disable code signing and updater
         shell: pwsh
         run: |
           $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
           $conf.bundle.windows.PSObject.Properties.Remove('signCommand')
+          $conf.plugins.PSObject.Properties.Remove('updater')
           $conf | ConvertTo-Json -Depth 20 | Set-Content src-tauri/tauri.conf.json
 
       - name: Build with Tauri
