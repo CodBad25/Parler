@@ -36,11 +36,10 @@ jobs:
       - name: Disable code signing and updater
         shell: pwsh
         run: |
-          $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          $conf.bundle.windows.PSObject.Properties.Remove('signCommand')
-          $conf.plugins.updater.pubkey = ''
-          $conf.plugins.updater.endpoints = @()
-          $conf | ConvertTo-Json -Depth 20 | Set-Content src-tauri/tauri.conf.json
+          $json = Get-Content src-tauri/tauri.conf.json -Raw
+          $json = $json -replace '"signCommand":\s*"[^"]*"', '' -replace ',\s*,', ',' -replace ',\s*}', '}'
+          $json = $json -replace '"pubkey":\s*"[^"]*"', '"pubkey": ""'
+          Set-Content src-tauri/tauri.conf.json $json
 
       - name: Build with Tauri
         uses: tauri-apps/tauri-action@v0
