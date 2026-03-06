@@ -38,7 +38,8 @@ jobs:
         run: |
           $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
           $conf.bundle.windows.PSObject.Properties.Remove('signCommand')
-          $conf.plugins.PSObject.Properties.Remove('updater')
+          $conf.plugins.updater.pubkey = ''
+          $conf.plugins.updater.endpoints = @()
           $conf | ConvertTo-Json -Depth 20 | Set-Content src-tauri/tauri.conf.json
 
       - name: Build with Tauri
